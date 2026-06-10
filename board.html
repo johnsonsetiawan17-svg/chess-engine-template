@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <style>
+        body { background: #1e1e1e; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 10px; color: #f0d9b5; font-family: sans-serif; }
+        h1 { margin: 0 0 10px 0; font-size: 24px; }
+        .controls { margin-bottom: 10px; }
+        button { background: #403e3b; color: #f0d9b5; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+        .game-wrapper { display: flex; align-items: center; }
+        .eval-bar { width: 20px; height: 320px; background: #262522; border: 2px solid #403e3b; margin-right: 10px; position: relative; }
+        .eval-fill { width: 100%; height: 50%; background: #ffffff; position: absolute; bottom: 0; transition: height 0.5s; }
+        .board { display: grid; grid-template-columns: repeat(8, 40px); grid-template-rows: repeat(8, 40px); border: 2px solid #403e3b; }
+        .sq { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 32px; cursor: pointer; user-select: none; color: #000; position: relative; }
+        .light { background: #f0d9b5; } .dark { background: #b58863; }
+        .sel { background: #bab73c !important; }
+        .hint { background-color: #63b57f !important; }
+    </style>
+</head>
+<body>
+    <h1>Tortoise</h1>
+    <div class="controls"><button onclick="flip()">Switch Sides</button></div>
+    <div class="game-wrapper">
+        <div class="eval-bar"><div class="eval-fill" id="evalBar"></div></div>
+        <div class="board" id="board"></div>
+    </div>
+
+    <script>
+        const game = new Chess();
+        let sel = null, pov = 'w';
+        let engine;
+        let currentHints = []; 
+
+        fetch("https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js")
+            .then(res => res.text())
+            .then(text => {
+                const blob = new Blob([text], {type: 'application/javascript'});
+                engine = new Worker(URL.createObjectURL(blob));
+                
+                engine.onmessage = (e) => {
+                    if (typeof e.data !== 'string') return;
+                    if (e.data.includes("score cp")) {
+                        let score = parseInt(e.data.split("cp ")[1]);
+                        if (game.turn() === 'b') score = -score;
+                        let percent = 50 + (score / 40);
+                        document.getElementById('evalBar').style.height = Math.min(Math.max(percent, 5), 95) + "%";
+                    }
+                    if (e.data.includes("bestmove")) {
+                        let move = e.data.split(' ')[1];
+                        if (move) {
+                            currentHints = [move.substring(0,2), move.substring(2,4)];
+                            applyHighlights();
+                        }
+                    }
+                };
+                
+                engine.postMessage("uci");
+                engine.postMessage("setoption name Hash value 64"); 
+                engine.postMessage("position fen " + game.fen());
+                // Lowered depth to 14 for lightning-fast 3000 ELO speed!
+                engine.postMessage("go depth 14"); 
+            });
+
+        function draw() {
+            const boardEl = document.getElementById('board');
+            boardEl.innerHTML = '';
+            const b = game.board();
+            const pieces = { w: { p:'♙', r:'♖', n:'♘', b:'♗', q:'♕', k:'♔' }, b: { p:'♟', r:'♜', n:'♞', b:'♝', q:'♛', k:'♚' } };
+            
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    let r = pov === 'w' ? row : 7 - row;
+                    let c = pov === 'w' ? col : 7 - col;
+                    const sqData = b[r][c];
+                    const sqName = String.fromCharCode(97 + c) + (8 - r);
+
+                    const el = document.createElement('div');
+                    el.id = 'sq-' + sqName; 
+                    el.className = `sq ${(row+col)%2===0 ? 'light' : 'dark'} ${sel===sqName ? 'sel' : ''}`;
+                    el.innerText = sqData ? pieces[sqData.color][sqData.type] : '';
+                    el.onclick = () => movePiece(sqName);
+                    boardEl.appendChild(el);
+                }
+            }
+            applyHighlights(); 
+        }
+
+        function movePiece(sqName) {
+            if (!sel) { 
+                if (game.get(sqName)) { 
+                    sel = sqName; 
+                    draw(); 
+                }
+            } else { 
+                if (game.get(sqName) && game.get(sqName).color === game.get(sel).color) {
+                    sel = sqName;
+                    draw();
+                    return;
+                }
+
+                if (game.move({from: sel, to: sqName, promotion: 'q'})) {
+                    currentHints = []; 
+                    draw();
+                    if(engine) {
+                        engine.postMessage("position fen " + game.fen());
+                        // Fast thinking mode activated
+                        engine.postMessage("go depth 14"); 
+                    }
+                }
+                sel = null; 
+                draw();
+            }
+        }
+
+        function applyHighlights() {
+            document.querySelectorAll('.hint').forEach(e => e.classList.remove('hint'));
+            currentHints.forEach(sq => {
+                const el = document.getElementById('sq-' + sq);
+                if (el) el.classList.add('hint');
+            });
+        }
+
+        function flip() { pov = pov === 'w' ? 'b' : 'w'; draw(); }
+        
+        draw();
+    </script>
+</body>
+</html>
